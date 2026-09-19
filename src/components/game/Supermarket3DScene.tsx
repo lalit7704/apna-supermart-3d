@@ -1224,6 +1224,13 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
       });
 
       // --- Continuously Update Cashier Staff Animation at 60 FPS ---
+      employeesRef.current.filter((emp) => emp.hired).forEach((emp) => {
+        const staffHandle = staffMeshesMap.current.get(emp.id);
+        if (staffHandle) {
+          const walking = Boolean(emp.currentTask?.startsWith('Walking') || emp.currentTask?.startsWith('Carrying') || emp.currentTask?.startsWith('Restocking'));
+          staffHandle.setWalking(walking, time);
+        }
+      });
       const cashierEmp = employeesRef.current.find((e) => e.role === 'cashier' && e.hired);
       if (cashierEmp) {
         const staffHandle = staffMeshesMap.current.get(cashierEmp.id);

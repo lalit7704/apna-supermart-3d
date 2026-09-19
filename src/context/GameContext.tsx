@@ -822,8 +822,30 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (!isStoreOpen) return;
 
+    const defaultPosition = (role: EmployeeData['role']) => (
+      role === 'cashier' ? { x: checkoutPosition.x - 0.7, z: checkoutPosition.z }
+        : role === 'stocker' ? { x: -4.5, z: -3.8 }
+          : { x: 2, z: 0 }
+    );
+
+    const walkEmployee = (employee: EmployeeData, targetX: number, targetZ: number, task: string) => {
+      const start = defaultPosition(employee.role);
+      const x = employee.x ?? start.x;
+      const z = employee.z ?? start.z;
+      const dx = targetX - x;
+      const dz = targetZ - z;
+      const distance = Math.hypot(dx, dz);
+      if (distance < 0.38) return true;
+
+      const step = Math.min(distance, Math.max(0.28, employee.speed * 0.48));
+      setEmployees((prev) => prev.map((emp) => emp.id === employee.id
+        ? { ...emp, x: x + (dx / distance) * step, z: z + (dz / distance) * step, currentTask: task }
+        : emp));
+      return false;
+    };
+
     const employeeInterval = setInterval(() => {
-      // 1. Stocker Automation: If hired, automatically restocks empty shelves from delivery boxes
+      // 1. Stocker walks to the delivery box, then to the matching shelf before restocking it.
       const stocker = employees.find((e) => e.role === 'stocker' && e.hired);
       if (stocker && deliveryBoxes.length > 0) {
         const boxToRestock = deliveryBoxes[0];
@@ -832,45 +854,49 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         );
 
         if (matchingShelf) {
-          const qty = Math.min(matchingShelf.capacity - matchingShelf.currentStock, boxToRestock.quantity);
-          setShelfSlots((prev) =>
-            prev.map((s) =>
-              s.id === matchingShelf.id ? { ...s, currentStock: s.currentStock + qty } : s
-            )
-          );
-          setDeliveryBoxes((prev) => prev.filter((b) => b.id !== boxToRestock.id));
-          setEmployees((prev) => prev.map((emp) => emp.id === stocker.id ? { ...emp, currentTask: `Restocking ${matchingShelf.shelfName || 'shelf'}` } : emp));
-          sound.playRestock();
+          const carryingThisBox = stocker.currentTask === `Carrying ${boxToRestock.id}`;
+          if (!carryingThisBox) {
+            if (walkEmployee(stocker, boxToRestock.x, boxToRestock.z, 'Walking to stock room')) {
+              setEmployees((prev) => prev.map((emp) => emp.id === stocker.id ? { ...emp, currentTask: `Carrying ${boxToRestock.id}` } : emp));
+            }
+          } else if (walkEmployee(stocker, matchingShelf.x, matchingShelf.z, `Restocking ${matchingShelf.shelfName || 'shelf'}`)) {
+            const qty = Math.min(matchingShelf.capacity - matchingShelf.currentStock, boxToRestock.quantity);
+            setShelfSlots((prev) => prev.map((s) => s.id === matchingShelf.id ? { ...s, currentStock: s.currentStock + qty } : s));
+            setDeliveryBoxes((prev) => prev.filter((b) => b.id !== boxToRestock.id));
+            setEmployees((prev) => prev.map((emp) => emp.id === stocker.id ? { ...emp, currentTask: 'Looking for next shelf' } : emp));
+            sound.playRestock();
+          }
         }
       }
 
-      // 2. Cleaner Automation: If hired, automatically cleans dirty spots
+      // 2. Cleaner walks across the store to every spill or piece of trash before removing it.
       const cleaner = employees.find((e) => e.role === 'cleaner' && e.hired);
       if (cleaner && trashItems.length > 0) {
-        setTrashItems((prev) => prev.slice(1));
-        setCleanliness((prev) => Math.min(100, prev + 10));
-        setEmployees((prev) => prev.map((emp) => emp.id === cleaner.id ? { ...emp, currentTask: 'Cleaning store floor' } : emp));
-        sound.playSweep();
+        const mess = trashItems[0];
+        if (walkEmployee(cleaner, mess.x, mess.z, 'Walking to clean a spill')) {
+          setTrashItems((prev) => prev.filter((item) => item.id !== mess.id));
+          setCleanliness((prev) => Math.min(100, prev + 10));
+          setEmployees((prev) => prev.map((emp) => emp.id === cleaner.id ? { ...emp, currentTask: 'Cleaning store floor' } : emp));
+          sound.playSweep();
+        }
       }
 
-      // 3. Cashier Automation: If hired, automatically serves waiting customers
+      // 3. Cashier returns to the register, then scans the customer at the front of the queue.
       const cashier = employees.find((e) => e.role === 'cashier' && e.hired);
       if (cashier) {
-        const queue = customers.filter((c) => c.state === 'waiting_for_scan' || c.state === 'queuing');
-        const waiting = queue.find((c) => c.state === 'waiting_for_scan') || queue[0];
-        if (waiting) {
+        const atCounter = walkEmployee(cashier, checkoutPosition.x - 0.7, checkoutPosition.z, 'Walking to cash counter');
+        const waiting = customers.find((c) => c.state === 'waiting_for_scan');
+        if (atCounter && waiting) {
           setEmployees((prev) => prev.map((emp) => emp.id === cashier.id ? { ...emp, currentTask: `Billing ${waiting.name}` } : emp));
-          // A customer can be promoted to the register between animation ticks;
-          // process the front of the visible queue directly so no manual checkout is required.
           processCustomerCheckout(waiting.id, waiting.paymentMethod, waiting.cashOffered);
         } else {
           setEmployees((prev) => prev.map((emp) => emp.id === cashier.id && emp.currentTask !== 'Ready at checkout' ? { ...emp, currentTask: 'Ready at checkout' } : emp));
         }
       }
-    }, 1300);
+    }, 450);
 
     return () => clearInterval(employeeInterval);
-  }, [isStoreOpen, employees, deliveryBoxes, shelfSlots, trashItems, customers]);
+  }, [isStoreOpen, employees, deliveryBoxes, shelfSlots, trashItems, customers, checkoutPosition]);
 
   // --- Random Trash/Spill Dropping ---
   useEffect(() => {
