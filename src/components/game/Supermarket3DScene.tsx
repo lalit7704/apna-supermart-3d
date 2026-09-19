@@ -190,7 +190,15 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
   const roofHandleRef = useRef<SupermartRoofHandle | null>(null);
   const checkoutRef = useRef<THREE.Group | null>(null);
   const [layoutEditorOpen, setLayoutEditorOpen] = useState(false);
-  const [layoutSelection, setLayoutSelection] = useState('checkout');
+  const layoutEditorOpenRef = useRef(false);
+  const dragRef = useRef<{ type: 'shelf' | 'checkout' | 'staff'; id?: string; lastX: number; lastZ: number } | null>(null);
+  const moveShelfRef = useRef(moveShelf);
+  const moveCheckoutRef = useRef(moveCheckout);
+  const moveEmployeeRef = useRef(moveEmployee);
+  moveShelfRef.current = moveShelf;
+  moveCheckoutRef.current = moveCheckout;
+  moveEmployeeRef.current = moveEmployee;
+  useEffect(() => { layoutEditorOpenRef.current = layoutEditorOpen; }, [layoutEditorOpen]);
 
   // Keyboard Listeners
   useEffect(() => {
@@ -470,6 +478,7 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
     const checkout = create3DCheckoutCounter();
     checkout.position.set(checkoutPosition.x, 0, checkoutPosition.z);
     checkout.rotation.y = Math.PI;
+    checkout.userData.layoutItem = { type: 'checkout' };
     scene.add(checkout);
     checkoutRef.current = checkout;
 
@@ -749,8 +758,39 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
     trashGroupRef.current = trashGroup;
     scene.add(trashGroup);
 
-    // --- Mouse & Pointer Lock Controls ---
-    const handleMouseDown = () => {
+    // --- Mouse & Pointer Lock Controls / Layout Dragging ---
+    const raycaster = new THREE.Raycaster();
+    const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const getFloorPoint = (event: MouseEvent) => {
+      const rect = container.getBoundingClientRect();
+      const pointer = new THREE.Vector2(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      raycaster.setFromCamera(pointer, camera);
+      const point = new THREE.Vector3();
+      return raycaster.ray.intersectPlane(floorPlane, point) ? point : null;
+    };
+
+    const handleMouseDown = (event: MouseEvent) => {
+      if (layoutEditorOpenRef.current) {
+        const rect = container.getBoundingClientRect();
+        const pointer = new THREE.Vector2(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1,
+        );
+        raycaster.setFromCamera(pointer, camera);
+        const objects = [checkoutRef.current, shelvesGroupRef.current, ...Array.from(staffMeshesMap.current.values()).map((staff) => staff.root)].filter(Boolean) as THREE.Object3D[];
+        const hit = raycaster.intersectObjects(objects, true)[0];
+        let node: THREE.Object3D | null | undefined = hit?.object;
+        while (node && !node.userData.layoutItem) node = node.parent;
+        const point = getFloorPoint(event);
+        if (node?.userData.layoutItem && point) {
+          dragRef.current = { ...node.userData.layoutItem, lastX: point.x, lastZ: point.z };
+          event.preventDefault();
+        }
+        return;
+      }
       if (document.pointerLockElement !== container) {
         container.requestPointerLock?.();
       }
@@ -761,6 +801,22 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
     };
 
     const handleMouseMove = (e: MouseEvent) => {
+      if (dragRef.current) {
+        const point = getFloorPoint(e);
+        if (point) {
+          const drag = dragRef.current;
+          const dx = point.x - drag.lastX;
+          const dz = point.z - drag.lastZ;
+          if (Math.hypot(dx, dz) > 0.015) {
+            if (drag.type === 'shelf' && drag.id) moveShelfRef.current(drag.id, dx, dz);
+            if (drag.type === 'checkout') moveCheckoutRef.current(dx, dz);
+            if (drag.type === 'staff' && drag.id) moveEmployeeRef.current(drag.id, dx, dz);
+            drag.lastX = point.x;
+            drag.lastZ = point.z;
+          }
+        }
+        return;
+      }
       if (!isPointerLocked.current) return;
       const sensitivity = 0.0024;
       playerState.current.rotationY += e.movementX * sensitivity;
@@ -768,9 +824,12 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
       playerState.current.pitch = Math.max(-1.1, Math.min(1.1, playerState.current.pitch));
     };
 
+    const handleMouseUp = () => { dragRef.current = null; };
+
     container.addEventListener('mousedown', handleMouseDown);
     document.addEventListener('pointerlockchange', handlePointerLockChange);
     document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
 
     // --- Mobile Touch Look (Swipe to rotate camera) ---
     const handleTouchStart = (e: TouchEvent) => {
@@ -1187,6 +1246,7 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
       container.removeEventListener('mousedown', handleMouseDown);
       document.removeEventListener('pointerlockchange', handlePointerLockChange);
       document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
 
       container.removeEventListener('touchstart', handleTouchStart);
       container.removeEventListener('touchmove', handleTouchMove);
@@ -1227,6 +1287,7 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
 
       shelfMesh.position.set(slot.x, 0, slot.z);
       shelfMesh.rotation.y = slot.rotationY;
+      shelfMesh.userData.layoutItem = { type: 'shelf', id: slot.id };
       group.add(shelfMesh);
     });
   }, [shelfSlots]);
@@ -1326,6 +1387,7 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
         if (!handle) {
           const uniformColor = emp.role === 'cashier' ? '#0284c7' : emp.role === 'stocker' ? '#ea580c' : '#16a34a';
           const meshHandle = createStaffMesh(emp.role, uniformColor);
+          meshHandle.root.userData.layoutItem = { type: 'staff', id: emp.id };
 
           if (emp.role === 'cashier') {
             meshHandle.root.position.set(emp.x ?? checkoutPosition.x - 0.7, 0, emp.z ?? checkoutPosition.z);
@@ -1353,12 +1415,6 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
     });
   }, [employees, checkoutPosition]);
 
-  const nudgeSelection = (dx: number, dz: number) => {
-    if (layoutSelection === 'checkout') moveCheckout(dx, dz);
-    else if (layoutSelection.startsWith('shelf:')) moveShelf(layoutSelection.slice(6), dx, dz);
-    else if (layoutSelection.startsWith('staff:')) moveEmployee(layoutSelection.slice(6), dx, dz);
-  };
-
   return (
     <div ref={containerRef} id="supermarket-canvas-container" className="relative w-full h-full cursor-crosshair overflow-hidden select-none touch-none">
       <button onClick={() => setLayoutEditorOpen((open) => !open)} className="absolute right-3 top-16 z-30 rounded-xl border border-slate-600 bg-slate-900/90 px-3 py-2 text-xs font-bold text-white shadow-lg touch-auto">
@@ -1366,21 +1422,9 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
       </button>
       {layoutEditorOpen && (
         <div onMouseDown={(event) => event.stopPropagation()} className="absolute right-3 top-28 z-30 w-56 rounded-2xl border border-slate-600 bg-slate-950/95 p-3 text-white shadow-2xl touch-auto">
-          <p className="mb-2 text-xs font-black uppercase tracking-wide text-amber-300">Move store items</p>
-          <select value={layoutSelection} onChange={(event) => setLayoutSelection(event.target.value)} className="mb-3 w-full rounded-lg border border-slate-600 bg-slate-800 p-2 text-xs text-white">
-            <option value="checkout">Cash counter</option>
-            {shelfSlots.map((shelf) => <option key={shelf.id} value={`shelf:${shelf.id}`}>{shelf.shelfName || shelf.id}</option>)}
-            {employees.filter((employee) => employee.hired).map((employee) => <option key={employee.id} value={`staff:${employee.id}`}>{employee.name}</option>)}
-          </select>
-          <div className="grid grid-cols-3 gap-1 text-center">
-            <span />
-            <button onClick={() => nudgeSelection(0, -0.5)} className="rounded bg-slate-700 p-2">▲</button>
-            <span />
-            <button onClick={() => nudgeSelection(-0.5, 0)} className="rounded bg-slate-700 p-2">◀</button>
-            <button onClick={() => nudgeSelection(0, 0.5)} className="rounded bg-slate-700 p-2">▼</button>
-            <button onClick={() => nudgeSelection(0.5, 0)} className="rounded bg-slate-700 p-2">▶</button>
-          </div>
-          <p className="mt-2 text-[10px] leading-snug text-slate-300">Choose a shelf, counter, or hired staff member, then use arrows. Positions save with your game.</p>
+          <p className="mb-2 text-xs font-black uppercase tracking-wide text-amber-300">Drag & Drop Layout</p>
+          <p className="text-xs leading-relaxed text-slate-200">Click and hold a shelf, cash counter, or hired staff member in the 3D store. Drag to a free floor position, then release the mouse.</p>
+          <p className="mt-2 text-[10px] leading-snug text-slate-400">Close Edit Layout to return to normal camera controls. Positions save with your game.</p>
         </div>
       )}
     </div>
