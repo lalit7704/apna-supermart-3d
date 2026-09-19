@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
 import * as THREE from 'three';
 import { useGame } from '../../context/GameContext';
 import {
@@ -71,6 +71,7 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
     cameraMode,
     carriedBox,
     shelfSlots,
+    checkoutPosition,
     deliveryBoxes,
     trashItems,
     customers,
@@ -81,6 +82,9 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
     dropCarriedBox,
     restockShelfWithCarriedBox,
     cleanTrashItem,
+    moveShelf,
+    moveEmployee,
+    moveCheckout,
   } = useGame();
 
   // Player physics state in 3D
@@ -184,6 +188,9 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
   const deliveryBoxesGroupRef = useRef<THREE.Group | null>(null);
   const trashGroupRef = useRef<THREE.Group | null>(null);
   const roofHandleRef = useRef<SupermartRoofHandle | null>(null);
+  const checkoutRef = useRef<THREE.Group | null>(null);
+  const [layoutEditorOpen, setLayoutEditorOpen] = useState(false);
+  const [layoutSelection, setLayoutSelection] = useState('checkout');
 
   // Keyboard Listeners
   useEffect(() => {
@@ -461,9 +468,10 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
 
     // 6. Checkout Counter & Cash Register
     const checkout = create3DCheckoutCounter();
-    checkout.position.set(0, 0, 1.8);
+    checkout.position.set(checkoutPosition.x, 0, checkoutPosition.z);
     checkout.rotation.y = Math.PI;
     scene.add(checkout);
+    checkoutRef.current = checkout;
 
     // 7. Manager Ordering Desk with PC
     const managerDesk = create3DManagerDesk();
@@ -1004,7 +1012,7 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
       }
 
       // 2. Proximity to Checkout Counter Register
-      const distToCheckout = Math.hypot(px - 0, pz - 1.8);
+      const distToCheckout = Math.hypot(px - checkoutPosition.x, pz - checkoutPosition.z);
       if (!prompt && distToCheckout < 2.3) {
         const waitingCustomer = customersRef.current.find((c) => c.state === 'waiting_for_scan');
         if (waitingCustomer) {
@@ -1193,6 +1201,10 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
     };
   }, [expansionLevel, setInteractionPrompt]);
 
+  useEffect(() => {
+    checkoutRef.current?.position.set(checkoutPosition.x, 0, checkoutPosition.z);
+  }, [checkoutPosition]);
+
   // Synchronize 3D Shelves with dynamic GameContext state
   useEffect(() => {
     const group = shelvesGroupRef.current;
@@ -1316,18 +1328,21 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
           const meshHandle = createStaffMesh(emp.role, uniformColor);
 
           if (emp.role === 'cashier') {
-            meshHandle.root.position.set(-0.7, 0, 1.8);
+            meshHandle.root.position.set(emp.x ?? checkoutPosition.x - 0.7, 0, emp.z ?? checkoutPosition.z);
             meshHandle.root.rotation.y = 0;
           } else if (emp.role === 'stocker') {
-            meshHandle.root.position.set(-4.5, 0, -3.8);
+            meshHandle.root.position.set(emp.x ?? -4.5, 0, emp.z ?? -3.8);
             meshHandle.root.rotation.y = 0;
           } else if (emp.role === 'cleaner') {
-            meshHandle.root.position.set(2.0, 0, 0.0);
+            meshHandle.root.position.set(emp.x ?? 2.0, 0, emp.z ?? 0.0);
             meshHandle.root.rotation.y = 0;
           }
 
           scene.add(meshHandle.root);
           staffMeshesMap.current.set(emp.id, meshHandle);
+        } else {
+          const defaults = emp.role === 'cashier' ? { x: checkoutPosition.x - 0.7, z: checkoutPosition.z } : emp.role === 'stocker' ? { x: -4.5, z: -3.8 } : { x: 2, z: 0 };
+          handle.root.position.set(emp.x ?? defaults.x, 0, emp.z ?? defaults.z);
         }
       } else {
         if (handle) {
@@ -1336,13 +1351,38 @@ export const Supermarket3DScene: React.FC<Supermarket3DSceneProps> = ({
         }
       }
     });
-  }, [employees]);
+  }, [employees, checkoutPosition]);
+
+  const nudgeSelection = (dx: number, dz: number) => {
+    if (layoutSelection === 'checkout') moveCheckout(dx, dz);
+    else if (layoutSelection.startsWith('shelf:')) moveShelf(layoutSelection.slice(6), dx, dz);
+    else if (layoutSelection.startsWith('staff:')) moveEmployee(layoutSelection.slice(6), dx, dz);
+  };
 
   return (
-    <div
-      ref={containerRef}
-      id="supermarket-canvas-container"
-      className="relative w-full h-full cursor-crosshair overflow-hidden select-none touch-none"
-    />
+    <div ref={containerRef} id="supermarket-canvas-container" className="relative w-full h-full cursor-crosshair overflow-hidden select-none touch-none">
+      <button onClick={() => setLayoutEditorOpen((open) => !open)} className="absolute right-3 top-16 z-30 rounded-xl border border-slate-600 bg-slate-900/90 px-3 py-2 text-xs font-bold text-white shadow-lg touch-auto">
+        {layoutEditorOpen ? 'Close Layout' : 'Edit Layout'}
+      </button>
+      {layoutEditorOpen && (
+        <div onMouseDown={(event) => event.stopPropagation()} className="absolute right-3 top-28 z-30 w-56 rounded-2xl border border-slate-600 bg-slate-950/95 p-3 text-white shadow-2xl touch-auto">
+          <p className="mb-2 text-xs font-black uppercase tracking-wide text-amber-300">Move store items</p>
+          <select value={layoutSelection} onChange={(event) => setLayoutSelection(event.target.value)} className="mb-3 w-full rounded-lg border border-slate-600 bg-slate-800 p-2 text-xs text-white">
+            <option value="checkout">Cash counter</option>
+            {shelfSlots.map((shelf) => <option key={shelf.id} value={`shelf:${shelf.id}`}>{shelf.shelfName || shelf.id}</option>)}
+            {employees.filter((employee) => employee.hired).map((employee) => <option key={employee.id} value={`staff:${employee.id}`}>{employee.name}</option>)}
+          </select>
+          <div className="grid grid-cols-3 gap-1 text-center">
+            <span />
+            <button onClick={() => nudgeSelection(0, -0.5)} className="rounded bg-slate-700 p-2">▲</button>
+            <span />
+            <button onClick={() => nudgeSelection(-0.5, 0)} className="rounded bg-slate-700 p-2">◀</button>
+            <button onClick={() => nudgeSelection(0, 0.5)} className="rounded bg-slate-700 p-2">▼</button>
+            <button onClick={() => nudgeSelection(0.5, 0)} className="rounded bg-slate-700 p-2">▶</button>
+          </div>
+          <p className="mt-2 text-[10px] leading-snug text-slate-300">Choose a shelf, counter, or hired staff member, then use arrows. Positions save with your game.</p>
+        </div>
+      )}
+    </div>
   );
 };

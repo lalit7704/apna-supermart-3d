@@ -36,6 +36,7 @@ interface GameContextType {
   inventoryPrices: Record<string, number>;
   inventoryStorage: Record<string, number>;
   shelfSlots: ShelfSlot[];
+  checkoutPosition: { x: number; z: number };
   carriedBox: CarriedBox | null;
   deliveryBoxes: DeliveryBox[];
   trashItems: TrashItem[];
@@ -68,6 +69,9 @@ interface GameContextType {
   processCustomerCheckout: (customerId: string, paymentMethod: 'cash' | 'card', cashReceived?: number) => { success: boolean; change: number };
   assignShelfProduct: (shelfId: string, productId: string | null) => void;
   clearShelf: (shelfId: string) => void;
+  moveShelf: (shelfId: string, deltaX: number, deltaZ: number) => void;
+  moveEmployee: (employeeId: string, deltaX: number, deltaZ: number) => void;
+  moveCheckout: (deltaX: number, deltaZ: number) => void;
   hireEmployee: (empId: string) => boolean;
   fireEmployee: (empId: string) => void;
   upgradeEmployee: (empId: string) => boolean;
@@ -174,6 +178,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const [shelfSlots, setShelfSlots] = useState<ShelfSlot[]>(INITIAL_SHELVES);
+  const [checkoutPosition, setCheckoutPosition] = useState({ x: 0, z: 1.8 });
   const [carriedBox, setCarriedBox] = useState<CarriedBox | null>(null);
 
   // Delivery Boxes in storage room with real products ready to be organized
@@ -600,6 +605,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCustomers((prevCustomers) => {
         if (prevCustomers.length === 0) return prevCustomers;
 
+        // Customers form a single-file line from the counter back into the aisle.
+        // The first person is the only one ready for scanning; everyone else advances as it clears.
+        const queueIds = prevCustomers
+          .filter((c) => c.state === 'walking_to_checkout' || c.state === 'queuing' || c.state === 'waiting_for_scan')
+          .map((c) => c.id);
+
         const updated = prevCustomers.map((cust) => {
           // Keep customer state position progressing towards target coordinates
           const dx = cust.targetX - cust.x;
@@ -730,8 +741,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               return {
                 ...cust,
                 state: 'walking_to_checkout' as const,
-                targetX: 0,
-                targetZ: 1.0,
+                targetX: checkoutPosition.x,
+                targetZ: checkoutPosition.z - 1.05,
                 thought: 'Heading to checkout counter...',
               };
             } else {
@@ -765,13 +776,27 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
               return {
                 ...cust,
-                state: 'waiting_for_scan' as const,
+                state: 'queuing' as const,
+                targetX: checkoutPosition.x,
+                targetZ: checkoutPosition.z - 1.05,
                 totalBill: bill,
                 cashOffered: offered,
-                thought: 'Waiting at register to pay...',
+                thought: 'Joining the checkout line...',
               };
             }
             return cust;
+          }
+
+          if (cust.state === 'queuing' || cust.state === 'waiting_for_scan') {
+            const queueIndex = Math.max(0, queueIds.indexOf(cust.id));
+            const isAtFront = queueIndex === 0;
+            return {
+              ...cust,
+              state: isAtFront ? 'waiting_for_scan' as const : 'queuing' as const,
+              targetX: checkoutPosition.x,
+              targetZ: checkoutPosition.z - 1.05 - queueIndex * 1.05,
+              thought: isAtFront ? 'Your turn at the register...' : `Queue position ${queueIndex + 1} — waiting to pay...`,
+            };
           }
 
           // 5. Exiting: Despawn only when customer has completely walked outside onto the sidewalk
@@ -790,7 +815,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, 700);
 
     return () => clearInterval(shoppingLoop);
-  }, [isStoreOpen, shelfSlots, inventoryPrices, expansionLevel]);
+  }, [isStoreOpen, shelfSlots, inventoryPrices, expansionLevel, checkoutPosition]);
 
   // --- Autonomous Employee Automation Loop (Cashier, Stocker, Cleaner) ---
   useEffect(() => {
@@ -961,6 +986,24 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     sound.playBoxPickup();
   };
 
+  const moveShelf = (shelfId: string, deltaX: number, deltaZ: number) => {
+    setShelfSlots((prev) => prev.map((s) => s.id === shelfId
+      ? { ...s, x: Math.max(-7, Math.min(7, s.x + deltaX)), z: Math.max(-5.5, Math.min(5, s.z + deltaZ)) }
+      : s));
+  };
+
+  const moveEmployee = (employeeId: string, deltaX: number, deltaZ: number) => {
+    setEmployees((prev) => prev.map((emp) => {
+      if (emp.id !== employeeId) return emp;
+      const defaults = emp.role === 'cashier' ? { x: -0.7, z: 1.8 } : emp.role === 'stocker' ? { x: -4.5, z: -3.8 } : { x: 2, z: 0 };
+      return { ...emp, x: Math.max(-7, Math.min(7, (emp.x ?? defaults.x) + deltaX)), z: Math.max(-5.5, Math.min(5, (emp.z ?? defaults.z) + deltaZ)) };
+    }));
+  };
+
+  const moveCheckout = (deltaX: number, deltaZ: number) => {
+    setCheckoutPosition((pos) => ({ x: Math.max(-4, Math.min(4, pos.x + deltaX)), z: Math.max(-3, Math.min(4, pos.z + deltaZ)) }));
+  };
+
   // --- Employees Management ---
   const hireEmployee = (empId: string): boolean => {
     const emp = employees.find((e) => e.id === empId);
@@ -1053,6 +1096,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       inventory_prices: inventoryPrices,
       inventory_storage: inventoryStorage,
       shelf_stocks: shelfSlots.reduce((acc, s) => ({ ...acc, [s.id]: s.currentStock }), {}),
+      shelf_layout: shelfSlots,
+      checkout_position: checkoutPosition,
       expansion_level: expansionLevel,
       employees,
       missions,
@@ -1090,6 +1135,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (parsed.current_day) setCurrentDay(parsed.current_day);
         if (parsed.expansion_level) setExpansionLevel(parsed.expansion_level);
         if (parsed.inventory_prices) setInventoryPrices(parsed.inventory_prices);
+        if (parsed.shelf_layout) setShelfSlots(parsed.shelf_layout);
+        if (parsed.checkout_position) setCheckoutPosition(parsed.checkout_position);
         if (parsed.employees) setEmployees(parsed.employees);
         if (parsed.store_name) setStoreNameState(parsed.store_name);
         if (parsed.avatar_id) setAvatarIdState(parsed.avatar_id);
@@ -1107,6 +1154,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCurrentDay(1);
     setExpansionLevel(1);
     setShelfSlots(INITIAL_SHELVES);
+    setCheckoutPosition({ x: 0, z: 1.8 });
     setEmployees(INITIAL_EMPLOYEES);
     sound.playClick();
   };
@@ -1132,6 +1180,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         inventoryPrices,
         inventoryStorage,
         shelfSlots,
+        checkoutPosition,
         carriedBox,
         deliveryBoxes,
         trashItems,
@@ -1160,6 +1209,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         processCustomerCheckout,
         assignShelfProduct,
         clearShelf,
+        moveShelf,
+        moveEmployee,
+        moveCheckout,
         hireEmployee,
         fireEmployee,
         upgradeEmployee,

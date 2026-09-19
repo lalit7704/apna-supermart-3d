@@ -156,6 +156,8 @@ export interface GameSaveData {
   inventory_prices: Record<string, number>;
   inventory_storage: Record<string, number>;
   shelf_stocks: Record<string, number>;
+  shelf_layout?: ShelfSlot[];
+  checkout_position?: { x: number; z: number };
   expansion_level: number;
   employees: EmployeeData[];
   missions: Mission[];
