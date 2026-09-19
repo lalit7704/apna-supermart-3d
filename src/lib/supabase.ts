@@ -9,7 +9,13 @@ export function getSupabaseCredentials(): { url: string; anonKey: string; isConf
   // 1. Check Vite env variables
   if (typeof import.meta !== 'undefined' && import.meta.env) {
     url = (import.meta.env.VITE_SUPABASE_URL || import.meta.env.NEXT_PUBLIC_SUPABASE_URL || '') as string;
-    anonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '') as string;
+    anonKey = (
+      import.meta.env.VITE_SUPABASE_ANON_KEY ||
+      import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+      import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+      import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+      ''
+    ) as string;
   }
 
   // 2. Check localStorage override for development / testing convenience
