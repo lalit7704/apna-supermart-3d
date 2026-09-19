@@ -838,6 +838,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             )
           );
           setDeliveryBoxes((prev) => prev.filter((b) => b.id !== boxToRestock.id));
+          setEmployees((prev) => prev.map((emp) => emp.id === stocker.id ? { ...emp, currentTask: `Restocking ${matchingShelf.shelfName || 'shelf'}` } : emp));
           sound.playRestock();
         }
       }
@@ -847,18 +848,25 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (cleaner && trashItems.length > 0) {
         setTrashItems((prev) => prev.slice(1));
         setCleanliness((prev) => Math.min(100, prev + 10));
+        setEmployees((prev) => prev.map((emp) => emp.id === cleaner.id ? { ...emp, currentTask: 'Cleaning store floor' } : emp));
         sound.playSweep();
       }
 
       // 3. Cashier Automation: If hired, automatically serves waiting customers
       const cashier = employees.find((e) => e.role === 'cashier' && e.hired);
       if (cashier) {
-        const waiting = customers.find((c) => c.state === 'waiting_for_scan');
+        const queue = customers.filter((c) => c.state === 'waiting_for_scan' || c.state === 'queuing');
+        const waiting = queue.find((c) => c.state === 'waiting_for_scan') || queue[0];
         if (waiting) {
-          processCustomerCheckout(waiting.id, waiting.paymentMethod);
+          setEmployees((prev) => prev.map((emp) => emp.id === cashier.id ? { ...emp, currentTask: `Billing ${waiting.name}` } : emp));
+          // A customer can be promoted to the register between animation ticks;
+          // process the front of the visible queue directly so no manual checkout is required.
+          processCustomerCheckout(waiting.id, waiting.paymentMethod, waiting.cashOffered);
+        } else {
+          setEmployees((prev) => prev.map((emp) => emp.id === cashier.id && emp.currentTask !== 'Ready at checkout' ? { ...emp, currentTask: 'Ready at checkout' } : emp));
         }
       }
-    }, 2800);
+    }, 1300);
 
     return () => clearInterval(employeeInterval);
   }, [isStoreOpen, employees, deliveryBoxes, shelfSlots, trashItems, customers]);
