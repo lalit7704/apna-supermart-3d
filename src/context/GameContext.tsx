@@ -845,27 +845,51 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const employeeInterval = setInterval(() => {
-      // 1. Stocker walks to the delivery box, then to the matching shelf before restocking it.
+      // 1. Stocker cycles through every under-stocked shelf, assigning an appropriate
+      // product to empty bays and filling them from warehouse stock or deliveries.
       const stocker = employees.find((e) => e.role === 'stocker' && e.hired);
-      if (stocker && deliveryBoxes.length > 0) {
-        const boxToRestock = deliveryBoxes[0];
-        const matchingShelf = shelfSlots.find(
-          (s) => s.productId === boxToRestock.productId && s.currentStock < s.capacity
-        );
+      if (stocker) {
+        const shelfPlan = shelfSlots
+          .filter((shelf) => shelf.currentStock < shelf.capacity)
+          .sort((a, b) => (a.currentStock / a.capacity) - (b.currentStock / b.capacity))
+          .map((shelf) => {
+            const product = shelf.productId
+              ? PRODUCT_CATALOG.find((item) => item.id === shelf.productId)
+              : PRODUCT_CATALOG.find((item) => item.category === shelf.category && (inventoryStorage[item.id] || deliveryBoxes.some((box) => box.productId === item.id)));
+            if (!product) return null;
+            const available = (inventoryStorage[product.id] || 0) + deliveryBoxes.filter((box) => box.productId === product.id).reduce((sum, box) => sum + box.quantity, 0);
+            return available > 0 ? { shelf, product, available } : null;
+          })
+          .find(Boolean);
 
-        if (matchingShelf) {
-          const carryingThisBox = stocker.currentTask === `Carrying ${boxToRestock.id}`;
-          if (!carryingThisBox) {
-            if (walkEmployee(stocker, boxToRestock.x, boxToRestock.z, 'Walking to stock room')) {
-              setEmployees((prev) => prev.map((emp) => emp.id === stocker.id ? { ...emp, currentTask: `Carrying ${boxToRestock.id}` } : emp));
+        if (shelfPlan) {
+          const { shelf, product, available } = shelfPlan;
+          if (walkEmployee(stocker, shelf.x, shelf.z, `Restocking ${shelf.shelfName || 'shelf'}`)) {
+            const qty = Math.min(shelf.capacity - shelf.currentStock, available, 8);
+            const fromWarehouse = Math.min(qty, inventoryStorage[product.id] || 0);
+            const fromDelivery = qty - fromWarehouse;
+            setShelfSlots((prev) => prev.map((item) => item.id === shelf.id
+              ? { ...item, productId: product.id, currentStock: item.currentStock + qty }
+              : item));
+            if (fromWarehouse > 0) {
+              setInventoryStorage((prev) => ({ ...prev, [product.id]: Math.max(0, (prev[product.id] || 0) - fromWarehouse) }));
             }
-          } else if (walkEmployee(stocker, matchingShelf.x, matchingShelf.z, `Restocking ${matchingShelf.shelfName || 'shelf'}`)) {
-            const qty = Math.min(matchingShelf.capacity - matchingShelf.currentStock, boxToRestock.quantity);
-            setShelfSlots((prev) => prev.map((s) => s.id === matchingShelf.id ? { ...s, currentStock: s.currentStock + qty } : s));
-            setDeliveryBoxes((prev) => prev.filter((b) => b.id !== boxToRestock.id));
-            setEmployees((prev) => prev.map((emp) => emp.id === stocker.id ? { ...emp, currentTask: 'Looking for next shelf' } : emp));
+            if (fromDelivery > 0) {
+              setDeliveryBoxes((prev) => {
+                let remaining = fromDelivery;
+                return prev.flatMap((box) => {
+                  if (box.productId !== product.id || remaining <= 0) return [box];
+                  const used = Math.min(box.quantity, remaining);
+                  remaining -= used;
+                  return box.quantity > used ? [{ ...box, quantity: box.quantity - used }] : [];
+                });
+              });
+            }
+            setEmployees((prev) => prev.map((emp) => emp.id === stocker.id ? { ...emp, currentTask: `Filled ${shelf.shelfName || 'shelf'}` } : emp));
             sound.playRestock();
           }
+        } else {
+          setEmployees((prev) => prev.map((emp) => emp.id === stocker.id && emp.currentTask !== 'Warehouse stock needed' ? { ...emp, currentTask: 'Warehouse stock needed' } : emp));
         }
       }
 
@@ -896,7 +920,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, 450);
 
     return () => clearInterval(employeeInterval);
-  }, [isStoreOpen, employees, deliveryBoxes, shelfSlots, trashItems, customers, checkoutPosition]);
+  }, [isStoreOpen, employees, deliveryBoxes, inventoryStorage, shelfSlots, trashItems, customers, checkoutPosition]);
 
   // --- Random Trash/Spill Dropping ---
   useEffect(() => {
