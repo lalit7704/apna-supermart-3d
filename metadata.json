@@ -1,0 +1,6 @@
+{
+  "name": "SuperMart 3D Simulator",
+  "description": "A complete, playable 3D Supermarket Simulator: walk through your store, order wholesale stock, carry boxes, physically restock shelves, set prices, serve customers at checkout, hire staff, expand the store, and build your retail empire.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
