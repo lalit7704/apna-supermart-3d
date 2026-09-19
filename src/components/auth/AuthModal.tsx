@@ -8,6 +8,7 @@ import {
   ChefHat,
   ArrowRight,
   Sparkles,
+  Chrome,
   Loader2,
   AlertCircle,
   CheckCircle2,
@@ -30,7 +31,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   initialView = 'main_menu',
   onOpenSetup,
 }) => {
-  const { login, signUp, resetPassword, playAsGuest, isConfigured } = useAuth();
+  const { login, signUp, resetPassword, signInWithGoogle, playAsGuest, isConfigured } = useAuth();
 
   const [currentView, setCurrentView] = useState<AuthView>(initialView);
 
@@ -52,6 +53,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     sound.playClick();
     playAsGuest();
     if (onClose) onClose();
+  };
+
+  const handleGoogleSignIn = async () => {
+    setErrorMessage(null);
+    setIsSubmitting(true);
+    const result = await signInWithGoogle();
+    setIsSubmitting(false);
+    if (!result.success) {
+      setErrorMessage(result.error || 'Google sign-in could not start. Enable Google in Supabase Auth settings first.');
+    }
   };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -207,6 +218,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             >
               <span>LOGIN (लॉगिन)</span>
               <ArrowRight className="w-5 h-5" />
+            </button>
+
+            <button
+              onClick={handleGoogleSignIn}
+              disabled={!isConfigured || isSubmitting}
+              className="w-full py-3 px-6 rounded-2xl bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-800 font-extrabold text-sm border-2 border-slate-200 shadow-sm transition-all flex items-center justify-center gap-2"
+            >
+              <Chrome className="w-5 h-5 text-rose-500" />
+              <span>CONTINUE WITH GOOGLE</span>
             </button>
 
             <button

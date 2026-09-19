@@ -21,6 +21,7 @@ interface AuthContextType {
   login: (email: string, password: string, rememberSession?: boolean) => Promise<{ success: boolean; error?: string }>;
   signUp: (email: string, password: string, fullName: string) => Promise<{ success: boolean; error?: string; message?: string }>;
   resetPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
+  signInWithGoogle: () => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   updateDisplayName: (newName: string) => Promise<{ success: boolean; error?: string }>;
   checkConfig: () => void;
@@ -205,6 +206,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const signInWithGoogle = async () => {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return { success: false, error: 'Supabase is not configured yet.' };
+    }
+
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}${window.location.pathname}`,
+        },
+      });
+      return error ? { success: false, error: formatAuthError(error) } : { success: true };
+    } catch (err) {
+      return { success: false, error: formatAuthError(err) };
+    }
+  };
+
   const logout = async () => {
     const supabase = getSupabaseClient();
     if (supabase) {
@@ -261,6 +281,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         signUp,
         resetPassword,
+        signInWithGoogle,
         logout,
         updateDisplayName,
         checkConfig,
