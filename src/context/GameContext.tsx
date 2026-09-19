@@ -214,6 +214,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const hasHydratedSaveRef = useRef(false);
 
   // Max XP formula: Level 1 = 800, Level 2 = 1400, Level 3 = 2200...
   const maxXpForCurrentLevel = Math.round(800 * Math.pow(1.35, storeLevel - 1));
@@ -1106,6 +1107,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       shelf_stocks: shelfSlots.reduce((acc, s) => ({ ...acc, [s.id]: s.currentStock }), {}),
       shelf_layout: shelfSlots,
       checkout_position: checkoutPosition,
+      customers,
+      delivery_boxes: deliveryBoxes,
+      trash_items: trashItems,
+      carried_box: carriedBox,
+      camera_mode: cameraMode,
       expansion_level: expansionLevel,
       employees,
       missions,
@@ -1143,16 +1149,72 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (parsed.current_day) setCurrentDay(parsed.current_day);
         if (parsed.expansion_level) setExpansionLevel(parsed.expansion_level);
         if (parsed.inventory_prices) setInventoryPrices(parsed.inventory_prices);
+        if (parsed.inventory_storage) setInventoryStorage(parsed.inventory_storage);
         if (parsed.shelf_layout) setShelfSlots(parsed.shelf_layout);
         if (parsed.checkout_position) setCheckoutPosition(parsed.checkout_position);
         if (parsed.employees) setEmployees(parsed.employees);
+        if (parsed.customers) setCustomers(parsed.customers);
+        if (parsed.delivery_boxes) setDeliveryBoxes(parsed.delivery_boxes);
+        if (parsed.trash_items) setTrashItems(parsed.trash_items);
+        if (parsed.carried_box) setCarriedBox(parsed.carried_box);
+        if (parsed.camera_mode) setCameraMode(parsed.camera_mode);
+        if (parsed.day_time_seconds !== undefined) setDayTimeSeconds(parsed.day_time_seconds);
+        if (parsed.is_store_open !== undefined) setIsStoreOpen(parsed.is_store_open);
+        if (parsed.cleanliness !== undefined) setCleanliness(parsed.cleanliness);
+        if (parsed.store_rating !== undefined) setStoreRating(parsed.store_rating);
+        if (parsed.missions) setMissions(parsed.missions);
+        if (parsed.achievements) setAchievements(parsed.achievements);
         if (parsed.store_name) setStoreNameState(parsed.store_name);
         if (parsed.avatar_id) setAvatarIdState(parsed.avatar_id);
       } catch (e) {
         console.error('Failed to parse local save', e);
       }
     }
+    hasHydratedSaveRef.current = true;
   }, []);
+
+  // Keep a resumable local snapshot while the store is running. This is deliberately
+  // local-only: cloud writes remain on the explicit Save action, avoiding a network call every second.
+  useEffect(() => {
+    if (!hasHydratedSaveRef.current) return;
+
+    const timer = window.setTimeout(() => {
+      const snapshot: GameSaveData = {
+        user_id: user?.id || 'guest',
+        display_name: user?.user_metadata?.display_name || 'Store Manager',
+        store_name: storeName,
+        avatar_id: avatarId,
+        money,
+        store_level: storeLevel,
+        store_xp: storeXp,
+        store_rating: storeRating,
+        cleanliness,
+        current_day: currentDay,
+        day_time_seconds: dayTimeSeconds,
+        is_store_open: isStoreOpen,
+        inventory_prices: inventoryPrices,
+        inventory_storage: inventoryStorage,
+        shelf_stocks: shelfSlots.reduce((acc, shelf) => ({ ...acc, [shelf.id]: shelf.currentStock }), {}),
+        shelf_layout: shelfSlots,
+        checkout_position: checkoutPosition,
+        customers,
+        delivery_boxes: deliveryBoxes,
+        trash_items: trashItems,
+        carried_box: carriedBox,
+        camera_mode: cameraMode,
+        expansion_level: expansionLevel,
+        employees,
+        missions,
+        achievements,
+        daily_streak: 1,
+        last_daily_reward_claim: Date.now(),
+        last_saved_at: new Date().toISOString(),
+      };
+      localStorage.setItem('supermart_3d_save', JSON.stringify(snapshot));
+    }, 400);
+
+    return () => window.clearTimeout(timer);
+  }, [user, storeName, avatarId, money, storeLevel, storeXp, storeRating, cleanliness, currentDay, dayTimeSeconds, isStoreOpen, inventoryPrices, inventoryStorage, shelfSlots, checkoutPosition, customers, deliveryBoxes, trashItems, carriedBox, cameraMode, expansionLevel, employees, missions, achievements]);
 
   const resetGame = () => {
     localStorage.removeItem('supermart_3d_save');

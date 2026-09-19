@@ -158,6 +158,11 @@ export interface GameSaveData {
   shelf_stocks: Record<string, number>;
   shelf_layout?: ShelfSlot[];
   checkout_position?: { x: number; z: number };
+  customers?: CustomerData[];
+  delivery_boxes?: DeliveryBox[];
+  trash_items?: TrashItem[];
+  carried_box?: CarriedBox | null;
+  camera_mode?: CameraMode;
   expansion_level: number;
   employees: EmployeeData[];
   missions: Mission[];
